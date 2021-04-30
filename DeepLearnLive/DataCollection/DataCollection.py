@@ -7,7 +7,7 @@ import logging
 import subprocess
 import time
 import datetime
-from sequenceSpinBox import sequenceSpinBox
+from Libs.sequenceSpinBox import sequenceSpinBox as sequenceSpinBox
 
 
 try:
@@ -615,6 +615,8 @@ class DataCollectionWidget(ScriptedLoadableModuleWidget):
     self.autoLabelFilePathSelector.showBrowseButton = True
     self.autoLabelPath = os.path.join(self.moduleDir,os.pardir,"Datasets")
     self.autoLabelFilePathSelector.setCurrentPath(self.autoLabelPath)
+    self.autoLabelFilePathSelector.nameFilters = ["CSV (*.csv)"]
+    self.autoLabelFilePathSelector.filters = ctk.ctkPathLineEdit.Files | ctk.ctkPathLineEdit.Readable
     classificationFormLayout.addWidget(self.autoLabelFilePathSelector)
     self.autoLabelFilePathSelector.visible = False
 
@@ -1252,9 +1254,23 @@ class DataCollectionLogic(ScriptedLoadableModuleLogic):
       playWidgetButtons[2].click()
       self.finishedVideo = True
 
+  def getSequenceFromProxyNode(self, proxyNode):
+    if proxyNode is None:
+      return None
+
+    browserNodes = slicer.util.getNodesByClass("vtkMRMLSequenceBrowserNode")
+    for browserNode in browserNodes:
+      sequenceNode = browserNode.GetSequenceNode(proxyNode)
+      if sequenceNode:
+        return sequenceNode
+    return None
+
   def exportImagesFromSequence(self):
-    sequenceName = self.recordingVolumeNode.GetName().split(sep="_")
-    sequenceNode = slicer.util.getFirstNodeByName(sequenceName[0])
+    sequenceNode = self.getSequenceFromProxyNode(self.recordingVolumeNode)
+    if sequenceNode is None:
+      logging.error("Could not find sequence node")
+      return
+
     numDataNodes = sequenceNode.GetNumberOfDataNodes()
     addingToExisting = False
     labels = self.getLabelsFromSequence()
@@ -1265,7 +1281,7 @@ class DataCollectionLogic(ScriptedLoadableModuleLogic):
       addingToExisting = True
 
     for i in range(numDataNodes):
-      logging.info(str(i) + " / " + str(numDataNodes) + " written")
+      logging.info(str(i+1) + " / " + str(numDataNodes) + " written")
       dataNode = sequenceNode.GetNthDataNode(i)
       timeRecorded = float(sequenceNode.GetNthIndexValue(i))
       roundedtimeRecorded = "%.2f" % timeRecorded
