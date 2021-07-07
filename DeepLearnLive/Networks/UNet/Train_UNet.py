@@ -16,89 +16,17 @@ import cv2
 from matplotlib import pyplot as plt
 import UNet
 
+from UNetSequence import UNetSequence
+
 from tensorflow.keras import backend as K
 
 FLAGS = None
 
 class Train_UNet:
 
-    #Loads the data from the specified CSV file
-    # fold: The fold number given in the CSV file (should be an int)
-    # set: which set the images and labels make up (should be one of: "Train","Validation", or "Test")
-    # Returns:
-    #   images: The list of images loaded from the files or girderIDs
-    #   imageLabels: a dictionary of the labels for each image, indexed by the label name
-    def loadData(self,fold,set):
-        entries = self.dataCSVFile.loc[(self.dataCSVFile["Fold"] == fold) & (self.dataCSVFile["Set"] == set)]
-        images = []
-        imageLabels = []
-        numFilesWritten = 0
-        if "GirderID" in self.dataCSVFile.columns:
-            LabelNames = self.dataCSVFile.columns[8:]
-            for labelName in LabelNames:
-                imageLabels[labelName] = []
-            if self.gClient == None:
-                self.gClient = girder_client.GirderClient(apiUrl=entries["Girder_URL"][0])
-                userName = input("Username: ")
-                password = input("Password: ")
-                self.gClient.authenticate(username=userName,password=password)
-
-            # tempFileDir is a folder in which to temporarily store the files downloaded from Girder
-            # by default the temporary folder is created in the current working directory, but this can
-            # be modified as necessary
-            username = os.environ['username']
-            tempFileDir = os.path.join('C:/Users/',username,'Documents/temp')
-            if not os.path.isdir(tempFileDir):
-                os.mkdir(tempFileDir)
-            for i in entries.index:
-                fileID = entries["GirderID"][i]
-                fileName = entries["FileName"][i]
-                if not os.path.isfile(os.path.join(tempFileDir,fileName)):
-                    self.gClient.downloadItem(fileID,tempFileDir)
-                    numFilesWritten +=1
-                    print(numFilesWritten)
-                image = cv2.imread(os.path.join(tempFileDir,fileName), 0)
-                resized = cv2.resize(image, (224, 224))
-                images.append(numpy.array(resized))
-                for labelName in LabelNames:
-                    imageLabels[labelName].append(entries[labelName][i])
-
-        else:
-            for i in entries.index:
-
-                #Read in the ultrasound image
-                filePath = entries["Folder"][i]
-                fileName = entries["FileName"][i]
-                image = cv2.imread(os.path.join(filePath,fileName), 0)
-                # print(os.path.join(filePath,fileName))
-                processed = self.process_ultrasound(image)
-                images.append(numpy.array(processed))
-
-                #Read in the segmentation image
-                fileName_seg = entries["VesselsCombined"][i]
-                segmentation = cv2.imread(os.path.join(filePath,fileName_seg), 0)
-                processed_seg = self.process_seg(segmentation)
-                imageLabels.append(numpy.array(processed_seg))
-
-        return numpy.array(images), numpy.array(imageLabels)
-
-    def process_ultrasound(self, image):
-        resized = cv2.resize(image, (128, 128)).astype(numpy.float16)
-        scaled = resized / resized.max()
-        return scaled[...,numpy.newaxis]
-
-    def process_seg(self, image):
-        resized = cv2.resize(image, (128, 128))
-        return resized[...,numpy.newaxis] / 255
-
-    def convertTextToNumericLabels(self,textLabels,labelValues):
-        numericLabels =[]
-        for i in range(len(textLabels)):
-            label = numpy.zeros(len(labelValues))
-            labelIndex = numpy.where(labelValues == textLabels[i])
-            label[labelIndex] = 1
-            numericLabels.append(label)
-        return numpy.array(numericLabels)
+    def getIndices(self,fold,set,dataset):
+        entries = dataset.loc[(dataset["Fold"] == fold) & (dataset["Set"] == set)]
+        return entries.index
 
     def saveTrainingInfo(self,foldNum,saveLocation,trainingHistory,results):
         LinesToWrite = []
@@ -157,42 +85,40 @@ class Train_UNet:
         self.learning_rate = FLAGS.learning_rate
         self.optimizer = tensorflow.keras.optimizers.Adam(learning_rate=self.learning_rate)
         self.loss_Function = IoU_loss
-        self.metrics = ['IoU','accuracy']
+        self.metrics = ['accuracy']
         self.numFolds = self.dataCSVFile["Fold"].max() + 1
         self.gClient = None
+
         network = UNet.UNet()
+        segmentationLabel = "Guidewire_Segmentation" #TODO: Make this the same as the name of the segmentation column in the .csv file
+
         for fold in range(0,1): #changed from range(0,self.numFolds)
             foldDir = self.saveLocation+"_Fold_"+str(fold)
             os.mkdir(foldDir)
             labelName = self.dataCSVFile.columns[-1] #This should be the label that will be used to train the network
 
-            trainImages,trainSegs = self.loadData(fold,"Train")
-            valImages,valSegs = self.loadData(fold,"Validation")
-            testImages,testSegs = self.loadData(fold,"Test")
+            #Generate indices for sequences
+            trainIdxs = self.getIndices(fold,"Train", self.dataCSVFile)
+            valIdxs = self.getIndices(fold,"Validation", self.dataCSVFile)
+            testIdxs = self.getIndices(fold,"Test", self.dataCSVFile)
 
-            seg_train_onehot = tensorflow.keras.utils.to_categorical(trainSegs, 2)
-            seg_val_onehot = tensorflow.keras.utils.to_categorical(valSegs, 2)
-            seg_test_onehot = tensorflow.keras.utils.to_categorical(testSegs, 2)
+            #Generate sequence objects
+            gClient = None
+            tempFileDir = None
+            trainSequence = UNetSequence(self.dataCSVFile, trainIdxs, self.batch_size, segmentationLabel, gClient, tempFileDir)
+            valSequence = UNetSequence(self.dataCSVFile, trainIdxs, self.batch_size, segmentationLabel, gClient, tempFileDir)
+            testSequence = UNetSequence(self.dataCSVFile, trainIdxs, self.batch_size, segmentationLabel, gClient, tempFileDir)
 
-            print("TrainImages: {}". format(trainImages.shape))
-            print("TrainSegs: {}". format(seg_train_onehot.shape))
-            print("valImages: {}". format(valImages.shape))
-            print("valSegs: {}". format(seg_val_onehot.shape))
-            print("testImages: {}". format(testImages.shape))
-            print("testSegs: {}". format(seg_test_onehot.shape))
+            cnnLabelValues = numpy.array(sorted(self.dataCSVFile[segmentationLabel].unique()))
+            numpy.savetxt(os.path.join(foldDir,"unet_labels.txt"),cnnLabelValues,fmt='%s',delimiter=',')
 
             model = network.createModel((128,128,1),num_classes=2)
             print(model.summary())
             model.compile(optimizer = self.optimizer, loss = self.loss_Function, metrics = [IoU, 'accuracy'])
-            history = model.fit(x=trainImages,
-                                y=seg_train_onehot,
-                                validation_data=(valImages,seg_val_onehot),
-                                batch_size = self.batch_size,
+            history = model.fit(x=trainSequence,
+                                validation_data=valSequence,
                                 epochs = self.numEpochs)
-
-            results = model.evaluate(x = testImages,
-                                     y = seg_test_onehot,
-                                     batch_size = self.batch_size)
+            results = model.evaluate(x = testSequence)
             network.saveModel(model,foldDir)
             self.saveTrainingInfo(fold,foldDir,history.history,results)
             self.saveTrainingPlot(foldDir,history.history,"loss")
@@ -200,6 +126,8 @@ class Train_UNet:
                 self.saveTrainingPlot(foldDir,history.history,metric)
 
 def IoU_loss(y_true,y_pred):
+    print('y_true', y_true.shape)
+    print('y_pred', y_pred.shape)
     smooth = 1e-12
     intersection = K.sum(y_true[:,:,:,1] * y_pred[:,:,:,1])        #Create intersection
     sum_ = K.sum(y_true[:,:,:,1] + y_pred[:,:,:,1])                #Create union
@@ -219,13 +147,13 @@ if __name__ == '__main__':
   parser.add_argument(
       '--save_location',
       type=str,
-      default='C:/repos/aigt/DeepLearnLive/Networks/Vessel_UNet/EMBC/FullDataset1',
+      default='C:/repos/aigt/DeepLearnLive/Networks/Vessel_UNet/EMBC/FullDatasetRun2/',
       help='Name of the directory where the models and results will be saved'
   )
   parser.add_argument(
       '--data_csv_file',
       type=str,
-      default='C:/repos/aigt/DeepLearnLive/Datasets/US_Vessel_Segmentations/FullDataset_UNET.csv',
+      default="C:\\repos\\aigt\\DeepLearnLive\\Networks\\UNet\\LabelledData\\CISC867_CompleteDataset_VideoFolds.csv",
       help='Path to the csv file containing locations for all data used in training'
   )
   parser.add_argument(
@@ -237,7 +165,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--batch_size',
       type=int,
-      default=32,
+      default=8,
       help='type of output your model generates'
   )
   parser.add_argument(
