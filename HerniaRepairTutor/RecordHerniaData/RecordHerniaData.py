@@ -2,6 +2,7 @@ import os
 import unittest
 import logging
 import time
+import subprocess
 import vtk, qt, ctk, slicer
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
@@ -41,7 +42,7 @@ class RecordHerniaDataWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
   """Uses ScriptedLoadableModuleWidget base class, available at:
   https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
   """
-
+  '''
   def __init__(self, parent=None):
     """
     Called when the user opens the module the first time and the widget is initialized.
@@ -50,7 +51,7 @@ class RecordHerniaDataWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     VTKObservationMixin.__init__(self)  # needed for parameter node observation
     self.logic = RecordHerniaDataLogic()
     self._parameterNode = None
-    self._updatingGUIFromParameterNode = False
+    self._updatingGUIFromParameterNode = False'''
 
   def setup(self):
     """
@@ -73,123 +74,20 @@ class RecordHerniaDataWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     # in batch mode, without a graphical user interface.
     self.logic = RecordHerniaDataLogic()
     self.recordingStarted = False
+    self.camerasStarted = False
+    self.moduleDir = os.path.dirname(slicer.modules.recordherniadata.path)
     self.logic.setupScene()
-    self.logic.setParameterNode(self._parameterNode)
-
-    # Connections
-
-    # These connections ensure that we update parameter node when scene is closed
-    self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
-    self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
 
     # Buttons
     self.ui.StartStopRecordingButton.connect('clicked(bool)', self.onStartStopRecordingClicked)
-
-    # Make sure parameter node is initialized (needed for module reload)
-    self.initializeParameterNode()
+    self.ui.startCamerasButton.connect('clicked(bool)',self.onStartStopCamerasClicked)
 
   def cleanup(self):
     """
     Called when the application closes and the module widget is destroyed.
     """
-    self.removeObservers()
-
-  def enter(self):
-    """
-    Called each time the user opens this module.
-    """
-    # Make sure parameter node exists and observed
-    self.initializeParameterNode()
-
-  def exit(self):
-    """
-    Called each time the user opens a different module.
-    """
-    # Do not react to parameter node changes (GUI wlil be updated when the user enters into the module)
-    self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
-
-  def onSceneStartClose(self, caller, event):
-    """
-    Called just before the scene is closed.
-    """
-    # Parameter node will be reset, do not use it anymore
-    self.setParameterNode(None)
-
-  def onSceneEndClose(self, caller, event):
-    """
-    Called just after the scene is closed.
-    """
-    # If this module is shown while the scene is closed then recreate a new parameter node immediately
-    if self.parent.isEntered:
-      self.initializeParameterNode()
-
-  def initializeParameterNode(self):
-    """
-    Ensure parameter node exists and observed.
-    """
-    # Parameter node stores all user choices in parameter values, node selections, etc.
-    # so that when the scene is saved and reloaded, these settings are restored.
-
-    self.setParameterNode(self.logic.getParameterNode())
-    if not self._parameterNode.GetParameter('SavedScenesDirectory'):
-      savedScenesDir = self.resourcePath('SavedScenes')
-      if (not os.path.exists(savedScenesDir)):
-        os.makedirs(savedScenesDir)
-      self._parameterNode.SetParameter('SavedScenesDirectory',savedScenesDir)
-
-    self.logic.setParameterNode(self._parameterNode)
-
-    # Select default input nodes if nothing is selected yet to save a few clicks for the user
-    if not self._parameterNode.GetNodeReference("InputVolume"):
-      firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
-      if firstVolumeNode:
-        self._parameterNode.SetNodeReferenceID("InputVolume", firstVolumeNode.GetID())
-
-  def setParameterNode(self, inputParameterNode):
-    """
-    Set and observe parameter node.
-    Observation is needed because when the parameter node is changed then the GUI must be updated immediately.
-    """
-
-    if inputParameterNode:
-      self.logic.setDefaultParameters(inputParameterNode)
-
-    # Unobserve previously selected parameter node and add an observer to the newly selected.
-    # Changes of parameter node are observed so that whenever parameters are changed by a script or any other module
-    # those are reflected immediately in the GUI.
-    if self._parameterNode is not None:
-      self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
-    self._parameterNode = inputParameterNode
-    if self._parameterNode is not None:
-      self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
-
-    # Initial GUI update
-    self.updateGUIFromParameterNode()
-
-  def updateGUIFromParameterNode(self, caller=None, event=None):
-    """
-    This method is called whenever parameter node is changed.
-    The module GUI is updated to show the current state of the parameter node.
-    """
-
-    if self._parameterNode is None or self._updatingGUIFromParameterNode:
-      return
-    # Make sure GUI changes do not call updateParameterNodeFromGUI (it could cause infinite loop)
-    self._updatingGUIFromParameterNode = True
-    # All the GUI updates are done
-    self._updatingGUIFromParameterNode = False
-
-  def updateParameterNodeFromGUI(self, caller=None, event=None):
-    """
-    This method is called when the user makes any change in the GUI.
-    The changes are saved into the parameter node (so that they are restored when the scene is saved and loaded).
-    """
-    if self._parameterNode is None or self._updatingGUIFromParameterNode:
-      return
-
-    wasModified = self._parameterNode.StartModify()  # Modify all properties in a single batch
-
-    self._parameterNode.EndModify(wasModified)
+    #self.removeObservers()
+    pass
 
   def onStartStopRecordingClicked(self):
     """
@@ -206,13 +104,27 @@ class RecordHerniaDataWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.recordingStarted = True
       else:
         self.logic.StopRecording()
-        self.logic.StopRecording()
         self.recordingStarted = False
         self.ui.StartStopRecordingButton.setText("Start Recording")
-        self.logic.setupScene()
 
     except ValueError:
       logging.info("Ports must have numeric values")
+
+  def onStartStopCamerasClicked(self):
+    if not self.camerasStarted:
+      cmd = str(self.moduleDir+"\Scripts\StartPlusServer.bat")
+      print(cmd)
+      startupEnv = slicer.util.startupEnvironment()
+      p = subprocess.Popen(cmd, env=startupEnv)
+      self.ui.startCamerasButton.text = "Stop Cameras"
+      self.camerasStarted = True
+    else:
+      cmd = str(self.moduleDir + "\Scripts\StopPlus.bat")
+      startupEnv = slicer.util.startupEnvironment()
+      p = subprocess.Popen(cmd, env=startupEnv)
+      self.ui.startCamerasButton.text="Start Cameras"
+      self.camerasStarted = False
+
 
 
 #
@@ -235,21 +147,6 @@ class RecordHerniaDataLogic(ScriptedLoadableModuleLogic):
     """
     ScriptedLoadableModuleLogic.__init__(self)
 
-  def setDefaultParameters(self, parameterNode):
-    """
-    Initialize parameter node with default settings.
-    """
-    if not parameterNode.GetParameter("RGBPort"):
-      parameterNode.SetParameter("RGBPort", "18944")
-    if not parameterNode.GetParameter("DepthPort"):
-      parameterNode.SetParameter("DepthPort", "18945")
-    if not parameterNode.GetParameter("SecondRGBPort"):
-      parameterNode.SetParameter("SecondRGBPort", "18946")
-    if not parameterNode.GetParameter("SecondDepthPort"):
-      parameterNode.SetParameter("SecondDepthPort", "18947")
-
-  def setParameterNode(self,parameterNode):
-    self.parameterNode = parameterNode
 
 
   def setupOpenIGTLinkConnectors(self, rgbPort,depthPort,secondRGBPort,secondDepthPort):
@@ -298,6 +195,7 @@ class RecordHerniaDataLogic(ScriptedLoadableModuleLogic):
     self.secondDepthConnectorNode.Start()
 
   def setupScene(self):
+    self.saveScenesDirectory = os.path.join(os.path.dirname(slicer.modules.recordherniadata.path), "Resources\SavedScenes")
     self.setupOpenIGTLinkConnectors(18944,18945,18946,18947)
 
     try:
@@ -347,7 +245,7 @@ class RecordHerniaDataLogic(ScriptedLoadableModuleLogic):
       resliceLogic.SetModeForSlice(6, sliceNode)
       resliceLogic.SetFlipForSlice(False, sliceNode)
       # resliceLogic.SetRotationForSlice(180, yellowNode)
-      sliceLogic.FitSliceToAll()
+      #sliceLogic.FitSliceToAll()
 
   def StartRecording(self,fileName):
     self.fileName = fileName + "-" + time.strftime("%Y%m%d-%H%M%S")
@@ -358,7 +256,7 @@ class RecordHerniaDataLogic(ScriptedLoadableModuleLogic):
   def StopRecording(self):
     self.stopSequenceBrowserRecording(self.herniaSequenceBrowserNode)
     self.saveRecording()
-    self.removeRecordingFromScene()
+    #self.removeRecordingFromScene()
 
   def startSequenceBrowserRecording(self, browserNode):
     if (browserNode is None):
@@ -389,22 +287,81 @@ class RecordHerniaDataLogic(ScriptedLoadableModuleLogic):
 
     #self.StartRecordingSeekWidget.setMRMLSequenceBrowserNode(browserNode)
 
+  def updateAllBrowserNodes(self):
+    # Two things to take care of:
+    # Set the sequences' virtual output nodes to be correct
+    # Restore the appropriate active volume node
+    sequenceSyncDict = {
+      "ImageRGB": self.rgbCamera2, # If the sequence name contains the key, make the virtual node same the value node
+      "Image1RGB": self.rgbCamera2,
+      "ImageDEPTH": self.depthCamera1,
+      "Image1DEPTH":self.depthCamera2
+    }
+
+    browserCollection = slicer.mrmlScene.GetNodesByClass( "vtkMRMLSequenceBrowserNode" )
+    for browserIndex in range( browserCollection.GetNumberOfItems() ):
+      browserNode = browserCollection.GetItemAsObject( browserIndex )
+      if ( browserNode.GetAttribute( "Recorded" ) is not None ):
+        continue
+
+      browserNode.SetOverwriteTargetNodeName(False)
+      browserNode.SetDeepCopyVirtualNodes(True)
+
+      sequenceCollection = vtk.vtkCollection()
+      browserNode.GetSynchronizedSequenceNodes( sequenceCollection, True )
+      for sequenceIndex in range( sequenceCollection.GetNumberOfItems() ):
+        sequenceNode = sequenceCollection.GetItemAsObject( sequenceIndex )
+        virtualNode = browserNode.GetVirtualOutputDataNode( sequenceNode )
+        if ( virtualNode == None ):
+          continue
+
+        # Check if the virtual node is already one of the acceptable output nodes
+        virtualNodeAcceptable = False
+        for key, value in sequenceSyncDict.iteritems():
+          if ( virtualNode.GetID() == value.GetID() ):
+            virtualNodeAcceptable = True
+        if ( virtualNodeAcceptable ):
+          continue
+
+        # Otherwise, replace it with an acceptable virtual node
+        for key, value in sequenceSyncDict.iteritems():
+          if ( key in virtualNode.GetName() ):
+            browserNode.RemoveSynchronizedSequenceNode( sequenceNode.GetID() ) # Need to fully remove the virtual node from the scene
+
+            originalProxyNodeName = value.GetName()
+
+            sequenceBrowserLogic = slicer.modules.sequencebrowser.logic()
+            sequenceBrowserLogic.AddSynchronizedNode( sequenceNode, value, browserNode ) #Re-add the sequence with the correct virtual node
+            browserNode.SetOverwriteProxyName( sequenceNode, False ) # Must set this after re-adding the sequence node (the setting is dropped when the sequence node is removed)
+
+            value.SetName( originalProxyNodeName )
+
+            slicer.mrmlScene.RemoveNode( virtualNode )
+
   def stopSequenceBrowserRecording(self, browserNode):
     if (browserNode is None):
       return
     browserNode.SetRecordingActive(False)
     browserNode.SetRecording( None, False )
-    self.saveRecording()
 
   def saveRecording(self):
-    savedScenesDirectory = self.parameterNode.GetParameter('SavedScenesDirectory')
+    savedScenesDirectory = self.saveScenesDirectory
+   
 
     recordingCollection = slicer.mrmlScene.GetNodesByClass( "vtkMRMLSequenceBrowserNode" )
     for nodeNumber in range( recordingCollection.GetNumberOfItems() ):
       browserNode = recordingCollection.GetItemAsObject( nodeNumber )
+      dataNodeNames = ["Image1RGB_Image1RGB","ImageRGB_ImageRGB","Image1DEPTH_Image1DE","ImageDEPTH_ImageDEPT"]
+      for dataNode in dataNodeNames:
+        proxyNode = slicer.util.getNode(dataNode)
+        sequenceNode = browserNode.GetSequenceNode(proxyNode)
+        if not sequenceNode.GetStorageNode() or not sequenceNode.GetStorageNode().IsA("vtkMRMLStreamingVolumeSequenceStorageNode"):
+          sequenceStorageNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLStreamingVolumeSequenceStorageNode")
+          sequenceNode.SetAndObserveStorageNodeID(sequenceStorageNode.GetID())
       filename = self.fileName + os.extsep + "sqbr"
       filename = os.path.join( savedScenesDirectory, filename )
       slicer.util.saveNode(browserNode, filename)
+      
 
   def removeRecordingFromScene(self):
     slicer.mrmlScene.Clear()
